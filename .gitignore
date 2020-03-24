@@ -10,3 +10,4 @@ release.sh
 _public
 build/
 out/
+.DS_Store

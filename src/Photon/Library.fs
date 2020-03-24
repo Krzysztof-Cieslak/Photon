@@ -1,4 +1,5 @@
 ﻿namespace Photon
+open System.IO
 
 module Core =
     open FSharp.Formatting
@@ -10,11 +11,7 @@ module Core =
         Info: 'a
     }
 
-
-
-
-
-    let getDocs (fileName: string) =
+    let getTests (fileName: string) =
         let props = ["project-name", "Photon"]
 
         let output = MetadataFormat.Generate(fileName, parameters = props, markDownComments = false, publicOnly = true)
@@ -43,32 +40,111 @@ module Core =
                         n.Info.NestedTypes |> List.map (fun t -> {ParentName = n.Info.Name;  NamespaceName = n.NamespaceName; Info = t}) )
             ]
 
-        allModules, allTypes
+        let modulesFunctionsWithTest =
+            allModules
+            |> Seq.collect (fun m ->
+                m.Info.AllMembers
+                |> Seq.filter (fun n -> n.Comment.RawData |> Seq.exists (fun kv -> kv.Key = "test"))
+                |> Seq.map (fun n ->
+                    {ParentName = m.ParentName; NamespaceName = m.NamespaceName; Info = n }
+                )
+            )
+
+        let typeMembersWithTest =
+            allTypes
+            |> Seq.collect (fun t ->
+                t.Info.AllMembers
+                |> Seq.filter (fun n -> n.Comment.RawData |> Seq.exists (fun kv -> kv.Key = "test"))
+                |> Seq.map (fun n ->
+                    {ParentName = t.ParentName; NamespaceName = t.NamespaceName; Info = n }
+                )
+            )
+
+        [yield! modulesFunctionsWithTest; yield! typeMembersWithTest]
+
+module EvaluatorHelpers =
+    open FSharp.Reflection
+    open System.Globalization
+    open FSharp.Compiler.Interactive.Shell
+    open System.Text
+
+    let sbOut = StringBuilder()
+    let sbErr = StringBuilder()
+    let fsi () =
+        let refs =
+            ProjectSystem.FSIRefs.getRefs ()
+            |> List.map (fun n -> sprintf "-r:%s" n)
 
 
+        let inStream = new StringReader("")
+        let outStream = new StringWriter(sbOut)
+        let errStream = new StringWriter(sbErr)
+        try
+            let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration()
+            let argv = [|
+                yield! refs
+                yield "--noframework"
+                yield "/temp/fsi.exe";
+                yield "--define:FORNAX"|]
+            FsiEvaluationSession.Create(fsiConfig, argv, inStream, outStream, errStream)
+        with
+        | ex ->
+            printfn "Error: %A" ex
+            printfn "Inner: %A" ex.InnerException
+            printfn "ErrorStream: %s" (errStream.ToString())
+            raise ex
 
-///Some comment on the module
-module Say =
+module Test =
 
     /// <summary>
-    ///
+    /// Let's have some sample summary
     /// </summary>
-    /// <param name="name"></param>
-    /// <returns></returns>
+    /// <summary>
+    /// Let's have some other summary
+    /// </summary>
+    /// <param name="name">Your name</param>
+    /// <returns>String</returns>
     /// <example>
-    /// <code>
     /// let v = hello "Chris"
     /// v = "Hello Chris"
-    /// </code>
     /// </example>
+    /// <test>
+    /// let v = hello "Gien"
+    /// v = "Hello Gien"
+    /// </test>
     let hello name =
-        printfn "Hello %s" name
+        sprintf "Hello %s" name
 
-    ///Some comment on the type
-    type SampleType = {
-        ///Some more comments
-        A: string
-        ///And more comments
-        B: int
+    /// <summary>
+    /// Let's have some sample summary
+    /// </summary>
+    /// <test>
+    /// let v = hello2 "Gien"
+    /// v = "Hello Gien"
+    /// </test>
+    let hello2 name =
+        sprintf "Hello %s" name
 
-    }
+    /// <summary>
+    /// Let's have some sample summary
+    /// </summary>
+    /// <test>
+    /// let v = hello3 "Gien"
+    /// v = "Hello Gien"
+    /// </test>
+    let hello3 name =
+        sprintf "Hello %s" name
+
+    let sampleNoTest t = ()
+
+    type A = {x: int}
+    with
+        /// <summary>
+        /// Let's have some sample summary
+        /// </summary>
+        /// <test>
+        /// let a = {x = 12}
+        /// let v = a.SomeMember()
+        /// v = 43
+        /// </test>
+        member _.SomeMember () = 42
